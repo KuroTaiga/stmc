@@ -4,6 +4,7 @@ from .humor_render_tools.tools import viz_smpl_seq
 from smplx.utils import Struct
 from .video import Video
 import os
+from functools import lru_cache
 from multiprocessing import Pool
 from tqdm import tqdm
 from multiprocessing import Process
@@ -13,7 +14,79 @@ from multiprocessing import Process
 
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 FACE_PATH = os.path.join(THIS_FOLDER, "humor_render_tools/smplh.faces")
-FACES = torch.from_numpy(np.int32(np.load(FACE_PATH)))
+SMPLH_FACES = torch.from_numpy(np.int32(np.load(FACE_PATH)))
+
+
+def _smplx_face_candidates():
+    candidates = []
+
+    env_path = os.environ.get("STMC_BODY_MODEL_PATH")
+    if env_path:
+        if os.path.isdir(env_path):
+            candidates.extend(
+                [
+                    os.path.join(env_path, "SMPLX_NEUTRAL.npz"),
+                    os.path.join(env_path, "SMPLX_MALE.npz"),
+                    os.path.join(env_path, "SMPLX_FEMALE.npz"),
+                ]
+            )
+        else:
+            candidates.append(env_path)
+
+    stmc_root = os.path.dirname(os.path.dirname(THIS_FOLDER))
+    repo_root = os.path.dirname(stmc_root)
+    candidates.extend(
+        [
+            os.path.join(
+                repo_root,
+                "LHM_3dnav",
+                "pretrained_models",
+                "human_model_files",
+                "smplx",
+                "SMPLX_NEUTRAL.npz",
+            ),
+            os.path.join(
+                repo_root,
+                "LHM_3dnav",
+                "pretrained_models",
+                "human_model_files",
+                "smplx",
+                "SMPLX_MALE.npz",
+            ),
+            os.path.join(
+                repo_root,
+                "LHM_3dnav",
+                "pretrained_models",
+                "human_model_files",
+                "smplx",
+                "SMPLX_FEMALE.npz",
+            ),
+        ]
+    )
+    return candidates
+
+
+@lru_cache(maxsize=1)
+def _load_smplx_faces():
+    for path in _smplx_face_candidates():
+        if not path.endswith(".npz") or not os.path.exists(path):
+            continue
+        data = np.load(path, allow_pickle=True)
+        if "f" in data:
+            return torch.from_numpy(np.int32(data["f"]))
+    raise FileNotFoundError(
+        "Could not find SMPLX faces. Set STMC_BODY_MODEL_PATH to a folder containing "
+        "SMPLX_*.npz files."
+    )
+
+
+def _get_faces(vertices):
+    nverts = vertices.shape[-2]
+    if nverts == 6890:
+        return SMPLH_FACES
+    if nverts == 10475:
+        return _load_smplx_faces()
+    raise ValueError(f"Unsupported vertex count {nverts}; cannot determine face topology.")
 
 
 class HumorRenderer:
@@ -44,7 +117,7 @@ def render(vertices, out_path, fps, progress_bar=tqdm, **kwargs):
     out_folder = os.path.splitext(out_path)[0]
 
     verts = torch.from_numpy(vertices)
-    body_pred = Struct(v=verts, f=FACES)
+    body_pred = Struct(v=verts, f=_get_faces(vertices))
 
     # out_folder, body_pred, start, end, fps, kwargs = args
     viz_smpl_seq(
@@ -78,7 +151,7 @@ def render_multiprocess(vertices, out_path, fps, **kwargs):
     out_folder = os.path.splitext(out_path)[0]
 
     verts = torch.from_numpy(vertices)
-    body_pred = Struct(v=verts, f=FACES)
+    body_pred = Struct(v=verts, f=_get_faces(vertices))
 
     # faster rendering
     # by rendering part of the sequence in parallel

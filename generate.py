@@ -81,8 +81,10 @@ def generate(c: DictConfig):
     logger.info("Loading the models")
 
     # Rendering
-    joints_renderer = instantiate(c.joints_renderer)
-    smpl_renderer = instantiate(c.smpl_renderer)
+    joints_renderer = instantiate(c.joints_renderer) if c.render_joints else None
+    smpl_renderer = None
+    if c.value_from == "smpl" and c.render_smpl and not c.fast:
+        smpl_renderer = instantiate(c.smpl_renderer)
 
     # Diffusion model
     # update the folder first, in case it has been moved
@@ -96,17 +98,18 @@ def generate(c: DictConfig):
     diffusion.eval()
     diffusion.to(c.device)
 
-    # jointstype = "smpljoints"
-    jointstype = "both"
+    smplh = None
+    if c.value_from == "smpl":
+        jointstype = "vertices"
 
-    from src.tools.smpl_layer import SMPLH
+        from src.tools.smpl_layer import SMPLH
 
-    smplh = SMPLH(
-        path="deps/smplh",
-        jointstype=jointstype,
-        input_pose_rep="axisangle",
-        gender=c.gender,
-    )
+        smplh = SMPLH(
+            path="deps/smplh",
+            jointstype=jointstype,
+            input_pose_rep="axisangle",
+            gender=c.gender,
+        )
 
     from src.model.text_encoder import TextToEmb
 
@@ -194,14 +197,15 @@ def generate(c: DictConfig):
                 path = npy_paths[idx].replace(".npy", "_smpl.npz")
                 np.savez(path, **output["smpldata"])
 
-            logger.info(f"Joints rendering {idx}")
-            joints_renderer(
-                joints, title="", output=joints_video_paths[idx], canonicalize=False
-            )
-            print(joints_video_paths[idx])
-            print()
+            if c.render_joints and joints_renderer is not None:
+                logger.info(f"Joints rendering {idx}")
+                joints_output_path = joints_renderer(
+                    joints, title="", output=joints_video_paths[idx], canonicalize=False
+                )
+                print(joints_output_path)
+                print()
 
-            if "vertices" in output and not c.fast:
+            if "vertices" in output and c.render_smpl and not c.fast and smpl_renderer is not None:
                 logger.info(f"SMPL rendering {idx}")
                 smpl_renderer(
                     output["vertices"], title="", output=smpl_video_paths[idx]

@@ -28,7 +28,9 @@ def extract_joints_smplrifke(
     joints = smpldata["joints"]
 
     if value_from == "smpl":
-        vertices, joints = smpl_layer(poses, trans)
+        vertices = smpl_layer(poses, trans)
+        if isinstance(vertices, tuple):
+            vertices = vertices[0]
         output = {
             "vertices": vertices.numpy(),
             "joints": joints.numpy(),

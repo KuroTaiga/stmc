@@ -17,3 +17,5 @@ overlap_s: 0.5
 ckpt: last
 device: cuda
 value_from: smpl
+render_joints: true
+render_smpl: true

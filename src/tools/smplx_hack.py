@@ -21,6 +21,7 @@ import os
 import os.path as osp
 
 import pickle
+import builtins
 
 import numpy as np
 
@@ -49,6 +50,23 @@ from smplx.utils import (
     find_joint_kin_chain,
 )
 from smplx.vertex_joint_selector import VertexJointSelector
+
+
+def _prepare_numpy_for_chumpy():
+    # Older chumpy releases import deprecated NumPy aliases directly.
+    # Re-create them so legacy SMPL pickle files can still be unpickled.
+    legacy_aliases = {
+        "bool": builtins.bool,
+        "int": builtins.int,
+        "float": builtins.float,
+        "complex": builtins.complex,
+        "object": builtins.object,
+        "str": builtins.str,
+        "unicode": str,
+    }
+    for name, value in legacy_aliases.items():
+        if not hasattr(np, name):
+            setattr(np, name, value)
 
 
 class SMPL(nn.Module):
@@ -143,6 +161,7 @@ class SMPL(nn.Module):
                 smpl_path = model_path
             assert osp.exists(smpl_path), "Path {} does not exist!".format(smpl_path)
 
+            _prepare_numpy_for_chumpy()
             with open(smpl_path, "rb") as smpl_file:
                 data_struct = Struct(**pickle.load(smpl_file, encoding="latin1"))
 

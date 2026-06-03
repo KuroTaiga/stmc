@@ -1,0 +1,23 @@
+a person is walking forward # 4.0
+a person is jogging in place # 4.0
+a person is sitting down on a chair # 3.5
+a person is standing up from a chair # 3.5
+a person is waving with the right hand # 3.0
+a person is pointing forward with the right hand # 3.0
+a person is clapping both hands # 3.0
+a person is bowing politely # 3.0
+a person is hopping to the right # 3.5
+a person is crouching down # 3.0
+a person is kicking forward with the right foot # 3.0
+a person is pretending to swing a golf club # 4.0
+a person is talking on the phone with the right hand # 4.0
+a person is wiping a table with the left hand # 3.5
+a person is dodging to avoid a hit to the head # 3.5
+a person is crawling forward #4.0
+a person is picking up a book #5.0
+a person is turning pages of a book #5.0
+a person is opening a safe #10.0
+a person is rowing an imaginary boat # 5.0
+a person is sneaking forward cautiously # 4.5
+a person is polishing a window with the right hand # 4.0
+a person is limping forward # 4.5

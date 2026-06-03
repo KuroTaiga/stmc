@@ -1,0 +1,23 @@
+A person is walking straight forward at a relaxed pace with both arms swinging naturally. # 4.0
+A human is lightly jogging in place while facing forward and pumping both arms in rhythm. # 4.0
+A person is standing upright and slowly sitting down onto a chair with controlled leg and torso movement. # 3.5
+A human is seated on a chair and rises to a full standing position in a smooth motion. # 3.5
+A person is standing upright and waving with the right hand at shoulder height while facing forward. # 3.0
+A human is standing still and pointing straight ahead with the right arm extended forward. # 3.0
+A person is standing in place and clapping both hands together repeatedly in front of the chest. # 3.0
+A human is standing upright and bowing forward politely with the head and upper body dipping down. # 3.0
+A person is making a small hop to the right while keeping balance with the torso centered. # 3.5
+A human is bending both knees and lowering into a crouched position with the torso leaning slightly forward. # 3.0
+A person is standing and kicking forward with the right foot before returning to balance. # 3.0
+A human is standing with both hands posed on an imaginary golf club and swinging it across the body. # 4.0
+A person is holding an imaginary phone to the right ear with the right hand while standing and talking. # 4.0
+A human is leaning slightly forward and wiping an imaginary table surface with the left hand. # 3.5
+A person is quickly ducking and shifting the upper body to avoid an incoming hit to the head. # 3.5
+A human is lying low to the ground and slowly crawling forward using both arms and legs. # 4.0
+A person is bending down and picking up a book from below with both hands before lifting it. # 5.0
+A human is holding a book and turning its pages carefully with both hands while looking downward. # 5.0
+A person is standing in front of an imaginary safe and using both hands to open it with deliberate motions. # 10.0
+A human is seated or braced in place and rowing an imaginary boat with both arms in repeated strokes. # 5.0
+A person is sneaking forward cautiously with bent knees, lowered posture, and careful small steps. # 4.5
+A human is standing close to an imaginary window and polishing it with the right hand in repeated motions. # 4.0
+A person is walking forward with an uneven limp, placing less weight on one leg. # 4.5

@@ -13,6 +13,7 @@ from src.tools.rifke import canonicalize_rotation
 
 logger = logging.getLogger("matplotlib.animation")
 logger.setLevel(logging.ERROR)
+runtime_logger = logging.getLogger(__name__)
 
 colors = ("black", "magenta", "red", "green", "blue")
 
@@ -58,7 +59,7 @@ class MatplotlibRender:
             # remove the hands
             joints = joints[:, :22]
 
-        render_animation(
+        return render_animation(
             joints,
             title=title,
             highlights=highlights,
@@ -70,6 +71,40 @@ class MatplotlibRender:
             fontsize=self.fontsize,
             canonicalize=canonicalize,
         )
+
+
+def _resolve_output_path_and_writer(output: str):
+    from matplotlib.animation import FFMpegWriter, ImageMagickWriter, PillowWriter
+
+    ext = os.path.splitext(output)[1].lower()
+
+    if ext == ".mp4":
+        if FFMpegWriter.isAvailable():
+            return output, "ffmpeg"
+
+        fallback_output = os.path.splitext(output)[0] + ".gif"
+        if PillowWriter.isAvailable():
+            runtime_logger.warning(
+                "FFmpeg is not available, saving joints animation as GIF instead: %s",
+                fallback_output,
+            )
+            return fallback_output, "pillow"
+        if ImageMagickWriter.isAvailable():
+            runtime_logger.warning(
+                "FFmpeg is not available, saving joints animation as GIF instead: %s",
+                fallback_output,
+            )
+            return fallback_output, "imagemagick"
+        return output, None
+
+    if ext == ".gif":
+        if PillowWriter.isAvailable():
+            return output, "pillow"
+        if ImageMagickWriter.isAvailable():
+            return output, "imagemagick"
+        return output, None
+
+    return output, None
 
 
 def init_axis(fig, title, radius=1.5):
@@ -252,8 +287,13 @@ def render_animation(
         from IPython.display import HTML
 
         HTML(anim.to_jshtml())
+        actual_output = output
     else:
-        # anim.save(output, writer='ffmpeg', fps=fps)
-        anim.save(output, fps=fps)
+        actual_output, writer = _resolve_output_path_and_writer(output)
+        save_kwargs = {"fps": fps}
+        if writer is not None:
+            save_kwargs["writer"] = writer
+        anim.save(actual_output, **save_kwargs)
 
     plt.close()
+    return actual_output

@@ -71,7 +71,7 @@ def generate_folder(c: DictConfig):
 
     # in case we want to get the joints from SMPL
     if c.value_from == "smpl":
-        jointstype = "both"
+        jointstype = "vertices"
         from src.tools.smpl_layer import SMPLH
 
         smplh = SMPLH(

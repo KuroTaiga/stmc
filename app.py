@@ -210,19 +210,33 @@ diffusion.load_state_dict(ckpt["state_dict"])
 diffusion.eval()
 diffusion.to(device)
 
-smplh_dict = {
-    gender: SMPLH(
-        path="deps/smplh",
-        jointstype="both",
-        input_pose_rep="axisangle",
-        gender=gender,
-    )
-    for gender in ["neutral", "male", "female"]
-}
+smplh_dict = None
 
 # Rendering
 joints_renderer = instantiate(c.joints_renderer)
-smpl_renderer = instantiate(c.smpl_renderer)
+smpl_renderer = None
+
+
+def get_smpl_renderer():
+    global smpl_renderer
+    if smpl_renderer is None:
+        smpl_renderer = instantiate(c.smpl_renderer)
+    return smpl_renderer
+
+
+def get_smplh_dict():
+    global smplh_dict
+    if smplh_dict is None:
+        smplh_dict = {
+            gender: SMPLH(
+                path="deps/smplh",
+                jointstype="vertices",
+                input_pose_rep="axisangle",
+                gender=gender,
+            )
+            for gender in ["neutral", "male", "female"]
+        }
+    return smplh_dict
 
 modelpath = cfg.data.text_encoder.modelname
 mean_pooling = cfg.data.text_encoder.mean_pooling
@@ -329,7 +343,9 @@ def generate(
 
         logger.info("Joints rendering")
         progress(0, desc="Joints rendering...")
-        joints_renderer(joints, title="", output=joints_video_path, canonicalize=False)
+        joints_video_path = joints_renderer(
+            joints, title="", output=joints_video_path, canonicalize=False
+        )
         progress(1, desc="Joints rendering...")
         time.sleep(0.5)
     return joints_video_path, smpl_rifke_feats_path
@@ -345,7 +361,7 @@ def get_data(smpl_rifke_feats_path, gender):
         cfg.motion_features,
         fps=fps,
         value_from="smpl",
-        smpl_layer=smplh_dict[gender],
+        smpl_layer=get_smplh_dict()[gender],
     )
 
     # joints path
@@ -372,7 +388,8 @@ def render_smpl(vertices_path, gender, progress=gr.Progress(track_tqdm=True)):
     except FileNotFoundError:
         return None
     logger.info("SMPL rendering")
-    smpl_renderer(
+    renderer = get_smpl_renderer()
+    renderer(
         vertices,
         output=smpl_video_path,
         progress_bar=progress.tqdm,

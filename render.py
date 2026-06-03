@@ -26,7 +26,7 @@ def render(c: DictConfig):
 
     motions = np.load(c.path)
 
-    if motions.shape[1] == 6890:
+    if motions.ndim >= 3 and motions.shape[-1] == 3 and motions.shape[1] >= 1000:
         renderer = instantiate(c.smpl_renderer)
     else:
         renderer = instantiate(c.joints_renderer)

@@ -1,5 +1,8 @@
 from typing import Optional
 
+import os
+import warnings
+
 import torch
 from torch import nn
 
@@ -10,20 +13,32 @@ import numpy as np
 from functools import reduce
 import operator
 
-from src.tools.smplx_hack import SMPLHLayer
+from src.tools.smplx_hack import SMPLHLayer, SMPLLayer
 from src.tools.geometry import to_matrix
 
-# EXTRACTOR from SMPLH layer
-# replace the "left_hand", "right_hand" by "left_index1", "right_index1" of SMPLH
+# Extract a 24-joint set used throughout STMC:
+# pelvis + 21 body joints + one representative left/right hand joint.
+# The hand-joint offsets depend on the underlying body model.
 # fmt: off
 JOINTS_EXTRACTOR = {
-    "smpljoints": np.array(
-        [
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-            11, 12, 13, 14, 15, 16, 17, 18, 19,
-            20, 21, 22, 37
-        ]
-    )
+    "smplh": {
+        "smpljoints": np.array(
+            [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 19,
+                20, 21, 22, 37
+            ]
+        )
+    },
+    "smplx": {
+        "smpljoints": np.array(
+            [
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                11, 12, 13, 14, 15, 16, 17, 18, 19,
+                20, 21, 25, 40
+            ]
+        )
+    },
 }
 # fmt: on
 
@@ -44,17 +59,18 @@ def call_by_chunks(
         yield function(**params)
 
 
-def extract_data(smpl_data, jointstype):
+def extract_data(smpl_data, jointstype, model_type="smplh"):
     assert jointstype in ["smpljoints", "vertices", "both"]
 
     if jointstype == "vertices":
         return smpl_data.vertices
 
     joints = smpl_data.joints
+    extractor_family = "smplx" if model_type == "smplx" else "smplh"
     if jointstype == "both":
-        extractor = JOINTS_EXTRACTOR["smpljoints"]
+        extractor = JOINTS_EXTRACTOR[extractor_family]["smpljoints"]
     else:
-        extractor = JOINTS_EXTRACTOR[jointstype]
+        extractor = JOINTS_EXTRACTOR[extractor_family][jointstype]
     joints = joints[..., extractor, :]
 
     if jointstype == "both":
@@ -77,12 +93,24 @@ class SMPLH(nn.Module):
         self.batch_size = batch_size
         self.input_pose_rep = input_pose_rep
         self.jointstype = jointstype
+        self.model_path, self.model_type = find_body_model_path(path)
 
-        # Remove annoying print
-        # with contextlib.redirect_stdout(None):
-        self.smplh = SMPLHLayer(
-            path, ext="npz", gender=gender, num_betas=num_betas
-        ).eval()
+        if self.model_type == "smplh":
+            self.smplh = SMPLHLayer(
+                self.model_path, ext="npz", gender=gender, num_betas=num_betas
+            ).eval()
+        elif self.model_type == "smpl":
+            self.smplh = SMPLLayer(
+                self.model_path, gender=gender, num_betas=num_betas
+            ).eval()
+        elif self.model_type == "smplx":
+            from smplx import SMPLXLayer as ExternalSMPLXLayer
+
+            self.smplh = ExternalSMPLXLayer(
+                self.model_path, ext="npz", gender=gender, num_betas=num_betas
+            ).eval()
+        else:
+            raise ValueError(f"Unsupported model type: {self.model_type}")
 
         self.faces = self.smplh.faces
 
@@ -147,19 +175,22 @@ class SMPLH(nn.Module):
         trans_all = trans.reshape((nposes, *trans.shape[-1:]))
 
         body_pose = matrix_poses[:, 1:22]
-        if nohands:
-            # still axis angle
-            left_hand_pose = self.smplh.left_hand_mean.reshape(15, 3)
-            left_hand_pose = to_matrix("axisangle", left_hand_pose)
-            left_hand_pose = left_hand_pose[None].repeat((nposes, 1, 1, 1))
+        left_hand_pose = None
+        right_hand_pose = None
+        if self.model_type == "smplh":
+            if nohands:
+                # The training data used by STMC removes hand pose parameters.
+                left_hand_pose = self.smplh.left_hand_mean.reshape(15, 3)
+                left_hand_pose = to_matrix("axisangle", left_hand_pose)
+                left_hand_pose = left_hand_pose[None].repeat((nposes, 1, 1, 1))
 
-            right_hand_pose = self.smplh.right_hand_mean.reshape(15, 3)
-            right_hand_pose = to_matrix("axisangle", right_hand_pose)
-            right_hand_pose = right_hand_pose[None].repeat((nposes, 1, 1, 1))
-        else:
-            hand_pose = matrix_poses[:, 22:]
-            left_hand_pose = hand_pose[:, :15]
-            right_hand_pose = hand_pose[:, 15:]
+                right_hand_pose = self.smplh.right_hand_mean.reshape(15, 3)
+                right_hand_pose = to_matrix("axisangle", right_hand_pose)
+                right_hand_pose = right_hand_pose[None].repeat((nposes, 1, 1, 1))
+            else:
+                hand_pose = matrix_poses[:, 22:]
+                left_hand_pose = hand_pose[:, :15]
+                right_hand_pose = hand_pose[:, 15:]
 
         n = len(body_pose)
 
@@ -174,16 +205,17 @@ class SMPLH(nn.Module):
         parameters = {
             "global_orient": global_orient,
             "body_pose": body_pose,
-            "left_hand_pose": left_hand_pose,
-            "right_hand_pose": right_hand_pose,
             "transl": trans_all,
             "betas": betas,
         }
+        if self.model_type == "smplh":
+            parameters["left_hand_pose"] = left_hand_pose
+            parameters["right_hand_pose"] = right_hand_pose
 
         # run smplh model, split by chunks to fit in memory
         outputs = []
         for smpl_output in call_by_chunks(self.smplh, n, batch_size, parameters):
-            outputs.append(extract_data(smpl_output, jointstype))
+            outputs.append(extract_data(smpl_output, jointstype, self.model_type))
 
         if jointstype != "both":
             outputs = torch.cat(outputs)
@@ -202,6 +234,95 @@ class SMPLH(nn.Module):
                     output = output.squeeze(0)
                 out.append(output)
             return (*out,)
+
+
+def find_body_model_path(path: str) -> tuple[str, str]:
+    candidates = []
+
+    env_path = os.environ.get("STMC_BODY_MODEL_PATH")
+    if env_path:
+        candidates.append(env_path)
+
+    candidates.append(path)
+
+    this_file = os.path.abspath(__file__)
+    stmc_root = os.path.dirname(os.path.dirname(os.path.dirname(this_file)))
+    repo_root = os.path.dirname(stmc_root)
+    candidates.extend(
+        [
+            os.path.join(stmc_root, "deps", "smplh"),
+            os.path.join(
+                repo_root,
+                "LHM_3dnav",
+                "pretrained_models",
+                "human_model_files",
+                "smplh",
+            ),
+            os.path.join(
+                repo_root,
+                "LHM_3dnav",
+                "pretrained_models",
+                "human_model_files",
+                "smplx",
+            ),
+            os.path.join(
+                repo_root,
+                "LHM_3dnav",
+                "pretrained_models",
+                "human_model_files",
+                "smpl",
+            ),
+        ]
+    )
+
+    checked = []
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate = os.path.abspath(candidate)
+        if candidate in checked:
+            continue
+        checked.append(candidate)
+        model_type = detect_body_model_type(candidate)
+        if model_type is not None:
+            if model_type == "smpl":
+                warnings.warn(
+                    "Falling back to SMPL body models because no SMPL-H files were found. "
+                    "This is compatible with STMC's body-only motion representation, but "
+                    "hand articulation will not be available.",
+                    stacklevel=2,
+                )
+            return candidate, model_type
+
+    checked_paths = ", ".join(checked) if checked else path
+    raise FileNotFoundError(
+        "Could not find a compatible body model folder. Checked: "
+        f"{checked_paths}. Set STMC_BODY_MODEL_PATH to a folder containing "
+        "SMPLH_*.npz, SMPLX_*.npz, or SMPL_*.pkl files."
+    )
+
+
+def detect_body_model_type(path: str) -> Optional[str]:
+    if not os.path.isdir(path):
+        return None
+
+    smplh_files = [
+        f"SMPLH_{gender}.{ext}"
+        for gender in ("NEUTRAL", "MALE", "FEMALE")
+        for ext in ("npz", "pkl")
+    ]
+    if any(os.path.exists(os.path.join(path, filename)) for filename in smplh_files):
+        return "smplh"
+
+    smplx_files = [f"SMPLX_{gender}.npz" for gender in ("NEUTRAL", "MALE", "FEMALE")]
+    if any(os.path.exists(os.path.join(path, filename)) for filename in smplx_files):
+        return "smplx"
+
+    smpl_files = [f"SMPL_{gender}.pkl" for gender in ("NEUTRAL", "MALE", "FEMALE")]
+    if any(os.path.exists(os.path.join(path, filename)) for filename in smpl_files):
+        return "smpl"
+
+    return None
 
 
 def load_smplh_gender(
