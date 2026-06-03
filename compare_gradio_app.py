@@ -10,9 +10,55 @@ import time
 import uuid
 from pathlib import Path
 
-import gradio as gr
+import huggingface_hub
 import numpy as np
 import torch
+
+
+def _patch_huggingface_hub_hffolder() -> None:
+    if hasattr(huggingface_hub, "HfFolder"):
+        return
+
+    from pathlib import Path
+
+    from huggingface_hub import constants
+    from huggingface_hub.utils._auth import _save_token, get_token
+
+    class _CompatHfFolder:
+        @staticmethod
+        def get_token() -> str | None:
+            return get_token()
+
+        @staticmethod
+        def save_token(token: str) -> None:
+            _save_token(token, "default")
+            Path(constants.HF_TOKEN_PATH).parent.mkdir(parents=True, exist_ok=True)
+            Path(constants.HF_TOKEN_PATH).write_text(token)
+
+        @staticmethod
+        def delete_token() -> None:
+            Path(constants.HF_TOKEN_PATH).unlink(missing_ok=True)
+
+    huggingface_hub.HfFolder = _CompatHfFolder
+
+
+_patch_huggingface_hub_hffolder()
+
+import gradio as gr
+
+
+def _patch_gradio_matplotlib_backend_manager() -> None:
+    class _SafeMatplotlibBackendManager:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    gr.utils.MatplotlibBackendMananger = _SafeMatplotlibBackendManager
+
+
+_patch_gradio_matplotlib_backend_manager()
 
 try:
     from .compare_motion_utils import PELVIS_INDEX, load_compare_motion_data

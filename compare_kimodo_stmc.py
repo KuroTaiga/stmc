@@ -138,6 +138,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print the selected prompts and planned output locations without running generation.",
     )
+    parser.add_argument(
+        "--skip_overlay",
+        action="store_true",
+        help="Skip the slower pelvis-aligned overlay comparison videos.",
+    )
     return parser.parse_args()
 
 
@@ -316,32 +321,36 @@ def run_kimodo_generations(jobs: list[PromptJob], args: argparse.Namespace) -> d
     for job in jobs:
         ensure_clean_dir(job.kimodo_dir, args.overwrite)
 
-    manifest_path = jobs[0].prompt_file.parent / "kimodo_batch_manifest.json"
-    write_kimodo_batch_manifest(manifest_path, jobs)
-    cmd = [
-        "conda",
-        "run",
-        "-n",
-        args.kimodo_env,
-        "python",
-        str(KIMODO_SCRIPT),
-        "--batch_manifest",
-        str(manifest_path),
-        "--seed",
-        str(args.seed),
-        "--model",
-        args.kimodo_model,
-        "--diffusion_steps",
-        str(args.kimodo_diffusion_steps),
-        "--num_transition_frames",
-        str(args.kimodo_transition_frames),
-        "--save_amass",
-        "--save_motion_npz",
-        "--z_up",
-        "--no_video",
-        "--no_mesh_video",
-    ]
-    run_command(cmd, cwd=REPO_ROOT)
+    pending_jobs = [job for job in jobs if not (job.kimodo_dir / "kimodo_motion.npz").exists()]
+    if pending_jobs:
+        manifest_path = jobs[0].prompt_file.parent / "kimodo_batch_manifest.json"
+        write_kimodo_batch_manifest(manifest_path, pending_jobs)
+        cmd = [
+            "conda",
+            "run",
+            "-n",
+            args.kimodo_env,
+            "python",
+            str(KIMODO_SCRIPT),
+            "--batch_manifest",
+            str(manifest_path),
+            "--seed",
+            str(args.seed),
+            "--model",
+            args.kimodo_model,
+            "--diffusion_steps",
+            str(args.kimodo_diffusion_steps),
+            "--num_transition_frames",
+            str(args.kimodo_transition_frames),
+            "--save_amass",
+            "--save_motion_npz",
+            "--z_up",
+            "--no_video",
+            "--no_mesh_video",
+        ]
+        run_command(cmd, cwd=REPO_ROOT)
+    else:
+        log_status("Reusing existing Kimodo motion outputs for all selected prompts")
 
     motion_paths: dict[str, Path] = {}
     for job in jobs:
@@ -353,6 +362,12 @@ def run_kimodo_generations(jobs: list[PromptJob], args: argparse.Namespace) -> d
 
 
 def render_kimodo_videos(job: PromptJob, motion_npz: Path, args: argparse.Namespace) -> tuple[Path, Path]:
+    skeleton_path = job.kimodo_dir / "kimodo_skeleton.mp4"
+    mesh_path = job.kimodo_dir / "kimodo_mesh.mp4"
+    if not args.overwrite and skeleton_path.exists() and mesh_path.exists():
+        log_status(f"Reusing existing Kimodo videos for prompt {job.entry.index}")
+        return skeleton_path, mesh_path
+
     cmd = [
         "conda",
         "run",
@@ -370,8 +385,6 @@ def render_kimodo_videos(job: PromptJob, motion_npz: Path, args: argparse.Namesp
         "kimodo_mesh.mp4",
     ]
     run_command(cmd, cwd=REPO_ROOT)
-    skeleton_path = job.kimodo_dir / "kimodo_skeleton.mp4"
-    mesh_path = job.kimodo_dir / "kimodo_mesh.mp4"
     return skeleton_path, mesh_path
 
 
@@ -380,49 +393,64 @@ def run_stmc_generations(jobs: list[PromptJob], args: argparse.Namespace) -> dic
         ensure_clean_dir(job.stmc_dir, args.overwrite)
 
     run_dir = Path(args.stmc_run_dir).resolve()
-    batch_prompt_file = jobs[0].prompt_file.parent / "stmc_batch_prompts.txt"
-    write_stmc_batch_prompt_file(batch_prompt_file, jobs)
-    gen_dir = stmc_generation_dir(run_dir, batch_prompt_file, args.stmc_ckpt)
-    if gen_dir.exists() and args.overwrite:
-        shutil.rmtree(gen_dir)
-
-    cmd = [
-        "conda",
-        "run",
-        "-n",
-        args.stmc_env,
-        "python",
-        str(STMC_GENERATE_SCRIPT),
-        f"run_dir={run_dir}",
-        f"timeline={batch_prompt_file}",
-        "input_type=text",
-        "value_from=smpl",
-        "fast=false",
-        f"seed={args.seed}",
-        f"ckpt={args.stmc_ckpt}",
-        f"guidance={args.stmc_guidance}",
-        f"device={args.stmc_device}",
-        "render_joints=false",
-        "render_smpl=false",
+    pending_jobs = [
+        job
+        for job in jobs
+        if not ((job.stmc_dir / "stmc_joints.npy").exists() and (job.stmc_dir / "stmc_verts.npy").exists())
     ]
-    run_command(cmd, cwd=STMC_ROOT)
+    if pending_jobs:
+        batch_prompt_file = jobs[0].prompt_file.parent / "stmc_batch_prompts.txt"
+        write_stmc_batch_prompt_file(batch_prompt_file, pending_jobs)
+        gen_dir = stmc_generation_dir(run_dir, batch_prompt_file, args.stmc_ckpt)
+        if gen_dir.exists() and args.overwrite:
+            shutil.rmtree(gen_dir)
+
+        cmd = [
+            "conda",
+            "run",
+            "-n",
+            args.stmc_env,
+            "python",
+            str(STMC_GENERATE_SCRIPT),
+            f"run_dir={run_dir}",
+            f"timeline={batch_prompt_file}",
+            "input_type=text",
+            "value_from=smpl",
+            "fast=false",
+            f"seed={args.seed}",
+            f"ckpt={args.stmc_ckpt}",
+            f"guidance={args.stmc_guidance}",
+            f"device={args.stmc_device}",
+            "render_joints=false",
+            "render_smpl=false",
+        ]
+        run_command(cmd, cwd=STMC_ROOT)
+    else:
+        batch_prompt_file = jobs[0].prompt_file.parent / "stmc_batch_prompts.txt"
+        gen_dir = stmc_generation_dir(run_dir, batch_prompt_file, args.stmc_ckpt)
+        log_status("Reusing existing STMC joint and vertex outputs for all selected prompts")
 
     asset_paths: dict[str, tuple[Path, Path]] = {}
-    for idx, job in enumerate(jobs):
-        joints_src = gen_dir / f"{batch_prompt_file.stem}_text_{idx}.npy"
-        verts_src = gen_dir / f"{batch_prompt_file.stem}_text_{idx}_verts.npy"
-        smpl_src = gen_dir / f"{batch_prompt_file.stem}_text_{idx}_smpl.npz"
-        if not joints_src.exists():
-            raise FileNotFoundError(f"Missing STMC joints output: {joints_src}")
-        if not verts_src.exists():
-            raise FileNotFoundError(f"Missing STMC verts output: {verts_src}")
-
+    for job in jobs:
         joints_dst = job.stmc_dir / "stmc_joints.npy"
         verts_dst = job.stmc_dir / "stmc_verts.npy"
-        shutil.copy2(joints_src, joints_dst)
-        shutil.copy2(verts_src, verts_dst)
-        if smpl_src.exists():
-            shutil.copy2(smpl_src, job.stmc_dir / "stmc_smpl.npz")
+        if pending_jobs and job in pending_jobs:
+            idx = pending_jobs.index(job)
+            joints_src = gen_dir / f"{batch_prompt_file.stem}_text_{idx}.npy"
+            verts_src = gen_dir / f"{batch_prompt_file.stem}_text_{idx}_verts.npy"
+            smpl_src = gen_dir / f"{batch_prompt_file.stem}_text_{idx}_smpl.npz"
+            if not joints_src.exists():
+                raise FileNotFoundError(f"Missing STMC joints output: {joints_src}")
+            if not verts_src.exists():
+                raise FileNotFoundError(f"Missing STMC verts output: {verts_src}")
+            shutil.copy2(joints_src, joints_dst)
+            shutil.copy2(verts_src, verts_dst)
+            if smpl_src.exists():
+                shutil.copy2(smpl_src, job.stmc_dir / "stmc_smpl.npz")
+        elif not joints_dst.exists() or not verts_dst.exists():
+            raise FileNotFoundError(
+                f"Missing existing STMC assets for prompt {job.entry.index}: {joints_dst}, {verts_dst}"
+            )
         asset_paths[job.slug] = (joints_dst, verts_dst)
     return asset_paths
 
@@ -431,35 +459,45 @@ def render_stmc_videos(job: PromptJob, joints_npy: Path, verts_npy: Path, args: 
     skeleton_path = job.stmc_dir / "stmc_skeleton.mp4"
     mesh_path = job.stmc_dir / "stmc_mesh.mp4"
 
-    cmd_joints = [
-        "conda",
-        "run",
-        "-n",
-        args.stmc_env,
-        "python",
-        str(STMC_RENDER_SCRIPT),
-        f"path={joints_npy}",
-        f"out_path={skeleton_path}",
-        "fps=20.0",
-    ]
-    run_command(cmd_joints, cwd=STMC_ROOT)
+    if not args.overwrite and skeleton_path.exists():
+        log_status(f"Reusing existing STMC skeleton video for prompt {job.entry.index}")
+    else:
+        cmd_joints = [
+            "conda",
+            "run",
+            "-n",
+            args.stmc_env,
+            "python",
+            str(STMC_RENDER_SCRIPT),
+            f"path={joints_npy}",
+            f"out_path={skeleton_path}",
+            "fps=20.0",
+        ]
+        run_command(cmd_joints, cwd=STMC_ROOT)
 
-    cmd_mesh = [
-        "conda",
-        "run",
-        "-n",
-        args.stmc_env,
-        "python",
-        str(STMC_RENDER_SCRIPT),
-        f"path={verts_npy}",
-        f"out_path={mesh_path}",
-        "fps=20.0",
-    ]
-    run_command(cmd_mesh, cwd=STMC_ROOT)
+    if not args.overwrite and mesh_path.exists():
+        log_status(f"Reusing existing STMC mesh video for prompt {job.entry.index}")
+    else:
+        cmd_mesh = [
+            "conda",
+            "run",
+            "-n",
+            args.stmc_env,
+            "python",
+            str(STMC_RENDER_SCRIPT),
+            f"path={verts_npy}",
+            f"out_path={mesh_path}",
+            "fps=20.0",
+        ]
+        run_command(cmd_mesh, cwd=STMC_ROOT)
     return skeleton_path, mesh_path
 
 
 def render_overlay_compare_video(job: PromptJob, kimodo_motion_npz: Path, joints_npy: Path, verts_npy: Path, args: argparse.Namespace) -> Path:
+    if not args.overwrite and job.compare_overlay_path.exists():
+        log_status(f"Reusing existing overlay comparison video for prompt {job.entry.index}")
+        return job.compare_overlay_path
+
     cmd = [
         "conda",
         "run",
@@ -543,36 +581,45 @@ def main() -> None:
         stmc_skeleton, stmc_mesh = stmc_video_paths[job.slug]
         joints_npy, verts_npy = stmc_asset_paths[job.slug]
 
-        log_status(f"Building labeled skeleton comparison video for prompt {job.entry.index}")
-        combine_videos_side_by_side(
-            left_video=kimodo_skeleton,
-            right_video=stmc_skeleton,
-            prompt_text=job.entry.text,
-            left_label="Kimodo-SMPLX-RP",
-            right_label="STMC MDM-SMPL",
-            out_path=job.compare_skeleton_path,
-            args=args,
-        )
+        if not args.overwrite and job.compare_skeleton_path.exists():
+            log_status(f"Reusing existing labeled skeleton comparison video for prompt {job.entry.index}")
+        else:
+            log_status(f"Building labeled skeleton comparison video for prompt {job.entry.index}")
+            combine_videos_side_by_side(
+                left_video=kimodo_skeleton,
+                right_video=stmc_skeleton,
+                prompt_text=job.entry.text,
+                left_label="Kimodo-SMPLX-RP",
+                right_label="STMC MDM-SMPL",
+                out_path=job.compare_skeleton_path,
+                args=args,
+            )
 
-        log_status(f"Building labeled mesh comparison video for prompt {job.entry.index}")
-        combine_videos_side_by_side(
-            left_video=kimodo_mesh,
-            right_video=stmc_mesh,
-            prompt_text=job.entry.text,
-            left_label="Kimodo-SMPLX-RP",
-            right_label="STMC MDM-SMPL",
-            out_path=job.compare_mesh_path,
-            args=args,
-        )
+        if not args.overwrite and job.compare_mesh_path.exists():
+            log_status(f"Reusing existing labeled mesh comparison video for prompt {job.entry.index}")
+        else:
+            log_status(f"Building labeled mesh comparison video for prompt {job.entry.index}")
+            combine_videos_side_by_side(
+                left_video=kimodo_mesh,
+                right_video=stmc_mesh,
+                prompt_text=job.entry.text,
+                left_label="Kimodo-SMPLX-RP",
+                right_label="STMC MDM-SMPL",
+                out_path=job.compare_mesh_path,
+                args=args,
+            )
 
-        log_status(f"Building pelvis-aligned overlay comparison video for prompt {job.entry.index}")
-        render_overlay_compare_video(
-            job=job,
-            kimodo_motion_npz=kimodo_motion_paths[job.slug],
-            joints_npy=joints_npy,
-            verts_npy=verts_npy,
-            args=args,
-        )
+        if args.skip_overlay:
+            log_status(f"Skipping pelvis-aligned overlay comparison video for prompt {job.entry.index}")
+        else:
+            log_status(f"Building pelvis-aligned overlay comparison video for prompt {job.entry.index}")
+            render_overlay_compare_video(
+                job=job,
+                kimodo_motion_npz=kimodo_motion_paths[job.slug],
+                joints_npy=joints_npy,
+                verts_npy=verts_npy,
+                args=args,
+            )
 
     log_status(f"All comparisons completed successfully: {out_root / 'comparisons'}")
 

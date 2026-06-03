@@ -15,7 +15,8 @@ datasets/
 *.csv
 wandb/
 *.mp4
-
+logs/
+compare_gradio_cache/
 # C extensions
 *.so
 

@@ -66,6 +66,12 @@ def load_smplx_faces() -> np.ndarray:
         return np.asarray(data["f"], dtype=np.uint32)
 
 
+def load_smplx_joint_regressor() -> np.ndarray:
+    asset_path = ensure_smplx_asset()
+    with np.load(asset_path, allow_pickle=True) as data:
+        return np.asarray(data["J_regressor"], dtype=np.float32)
+
+
 def load_stmc_faces(num_vertices: int) -> np.ndarray:
     if num_vertices == 10475:
         return load_smplx_faces()
@@ -138,6 +144,27 @@ def compute_kimodo_mesh_vertices(joints_pos: np.ndarray, joints_rot: np.ndarray)
     return np.asarray(vertices, dtype=np.float32)
 
 
+def compute_stmc_mesh_joint_offset(vertices: np.ndarray, joints: np.ndarray) -> np.ndarray | None:
+    vertices = np.asarray(vertices, dtype=np.float32)
+    joints = np.asarray(joints, dtype=np.float32)
+
+    if vertices.shape[1] != 10475:
+        return None
+
+    joint_regressor = load_smplx_joint_regressor()
+    joint_count = min(SKELETON_JOINT_COUNT, joints.shape[1], joint_regressor.shape[0])
+    regressed_joints = np.einsum("jv,fvk->fjk", joint_regressor[:joint_count], vertices)
+    per_frame_offset = regressed_joints - joints[:, :joint_count, :]
+    return per_frame_offset.mean(axis=(0, 1)).astype(np.float32)
+
+
+def align_stmc_mesh_to_joints(vertices: np.ndarray, joints: np.ndarray) -> np.ndarray:
+    offset = compute_stmc_mesh_joint_offset(vertices, joints)
+    if offset is None:
+        return np.asarray(vertices, dtype=np.float32)
+    return np.asarray(vertices, dtype=np.float32) - offset.reshape(1, 1, 3)
+
+
 def align_points_by_pelvis(points: np.ndarray, joints: np.ndarray) -> np.ndarray:
     pelvis = np.asarray(joints[:, PELVIS_INDEX : PELVIS_INDEX + 1, :], dtype=np.float32)
     return np.asarray(points, dtype=np.float32) - pelvis
@@ -175,7 +202,10 @@ def load_compare_motion_data(
     kimodo_vertices = convert_kimodo_points_to_z_up(kimodo_vertices)
 
     stmc_joints = np.asarray(np.load(stmc_joints_npy), dtype=np.float32)[:, :SKELETON_JOINT_COUNT]
-    stmc_vertices = np.asarray(np.load(stmc_verts_npy), dtype=np.float32)
+    stmc_vertices = align_stmc_mesh_to_joints(
+        np.asarray(np.load(stmc_verts_npy), dtype=np.float32),
+        stmc_joints,
+    )
 
     kimodo_joints = resample_frames(kimodo_joints, target_frames)
     kimodo_vertices = resample_frames(kimodo_vertices, target_frames)

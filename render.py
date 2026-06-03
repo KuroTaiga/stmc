@@ -9,6 +9,17 @@ from omegaconf import DictConfig
 logger = logging.getLogger(__name__)
 
 
+def _configure_headless_opengl() -> None:
+    if os.environ.get("PYOPENGL_PLATFORM"):
+        return
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        return
+    os.environ["PYOPENGL_PLATFORM"] = "egl"
+
+
+_configure_headless_opengl()
+
+
 def T(x):
     import torch
     import numpy as np
