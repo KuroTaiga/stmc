@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -62,8 +63,10 @@ _patch_gradio_matplotlib_backend_manager()
 
 try:
     from .compare_motion_utils import PELVIS_INDEX, load_compare_motion_data
+    from .stmc_npz_to_lhmpp_json_seq import convert_one_npz
 except ImportError:
     from compare_motion_utils import PELVIS_INDEX, load_compare_motion_data
+    from stmc_npz_to_lhmpp_json_seq import convert_one_npz
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -79,6 +82,9 @@ SKELETON_JOINT_COUNT = 22
 NECK_INDEX = 12
 DEFAULT_KIMODO_ENV = "kimodo"
 DEFAULT_STMC_ENV = "stmc"
+STMC_JSON_WIDTH = 420.0
+STMC_JSON_HEIGHT = 700.0
+STMC_JSON_FOCAL = 700.0
 
 for root in (KIMODO_ROOT, STMC_ROOT):
     root_str = str(root)
@@ -235,6 +241,31 @@ def resample_frames(array: np.ndarray, target_frames: int) -> np.ndarray:
     return out.reshape((target_frames,) + array.shape[1:]).astype(np.float32)
 
 
+def has_frame_jsons(path: Path) -> bool:
+    return path.is_dir() and any(path.glob("*.json"))
+
+
+def export_stmc_frame_jsons(stmc_smpl_npz: Path, stmc_out_dir: Path, logs: list[str]) -> Path:
+    frames_dir = stmc_out_dir / "frames"
+    if has_frame_jsons(frames_dir):
+        logs.append(log_status(f"Reusing STMC per-frame JSONs at {frames_dir}"))
+        return frames_dir
+
+    stmc_out_dir.mkdir(parents=True, exist_ok=True)
+    smpl_copy = stmc_out_dir / "stmc_smpl.npz"
+    if stmc_smpl_npz.resolve() != smpl_copy.resolve():
+        shutil.copy2(stmc_smpl_npz, smpl_copy)
+    logs.append(log_status(f"Exporting STMC SMPL NPZ to LHM++ JSON frames at {frames_dir}"))
+    convert_one_npz(
+        input_path=stmc_smpl_npz,
+        out_dir=frames_dir,
+        width=STMC_JSON_WIDTH,
+        height=STMC_JSON_HEIGHT,
+        focal=STMC_JSON_FOCAL,
+    )
+    return frames_dir
+
+
 def compute_skeleton_edges() -> np.ndarray:
     skeleton = build_skeleton(22)
     edges = []
@@ -325,6 +356,10 @@ def run_generators(prompt: str, duration_s: float, seed: int, logs: list[str]) -
     )
 
     stmc_gen_dir = Path(APP_ARGS.stmc_run_dir).resolve() / "generations" / f"{prompt_file.stem}_last_text_to_motion"
+    stmc_smpl_candidates = sorted(stmc_gen_dir.glob("*_smpl.npz"))
+    if not stmc_smpl_candidates:
+        raise FileNotFoundError(f"Could not find STMC SMPL NPZ output in {stmc_gen_dir}")
+    export_stmc_frame_jsons(stmc_smpl_candidates[0], stmc_dir, logs)
     return work_dir, kimodo_dir / "kimodo_motion.npz", stmc_gen_dir
 
 

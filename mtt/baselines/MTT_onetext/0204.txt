@@ -1,1 +1,0 @@
-walk forwards and then slowly walk forwards while wave with the right hand # 0.0 # 9.8 # legs # right arm

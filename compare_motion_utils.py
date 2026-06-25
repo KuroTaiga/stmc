@@ -166,23 +166,27 @@ def align_stmc_mesh_to_joints(vertices: np.ndarray, joints: np.ndarray) -> np.nd
 
 
 def align_points_by_pelvis(points: np.ndarray, joints: np.ndarray) -> np.ndarray:
-    pelvis = np.asarray(joints[:, PELVIS_INDEX : PELVIS_INDEX + 1, :], dtype=np.float32)
-    return np.asarray(points, dtype=np.float32) - pelvis
+    points = np.asarray(points, dtype=np.float32)
+    joints = np.asarray(joints, dtype=np.float32)
+    pelvis = joints[:, PELVIS_INDEX : PELVIS_INDEX + 1, :]
+    aligned = points - pelvis
+    floor = float(aligned[..., 2].min())
+    aligned[..., 2] -= floor
+    return aligned.astype(np.float32)
 
 
-def compute_overlay_floor_shift(
-    kimodo_joints: np.ndarray,
-    stmc_joints: np.ndarray,
-    kimodo_vertices: np.ndarray,
-    stmc_vertices: np.ndarray,
-) -> float:
-    min_z = min(
-        float(kimodo_joints[..., 2].min()),
-        float(stmc_joints[..., 2].min()),
-        float(kimodo_vertices[..., 2].min()),
-        float(stmc_vertices[..., 2].min()),
-    )
-    return -min_z if min_z < 0.0 else 0.0
+def compute_overlay_floor_shift(*arrays: np.ndarray) -> float:
+    mins = [float(np.asarray(array, dtype=np.float32)[..., 2].min()) for array in arrays if array is not None]
+    if not mins:
+        return 0.0
+    return -min(mins)
+
+
+def shift_points_to_floor(points: np.ndarray, floor_shift: float) -> np.ndarray:
+    shifted = np.asarray(points, dtype=np.float32).copy()
+    if floor_shift:
+        shifted[..., 2] += float(floor_shift)
+    return shifted.astype(np.float32)
 
 
 def load_compare_motion_data(
@@ -212,39 +216,34 @@ def load_compare_motion_data(
     stmc_joints = resample_frames(stmc_joints, target_frames)
     stmc_vertices = resample_frames(stmc_vertices, target_frames)
 
-    aligned_kimodo_joints = align_points_by_pelvis(kimodo_joints, kimodo_joints)
-    aligned_stmc_joints = align_points_by_pelvis(stmc_joints, stmc_joints)
-    aligned_kimodo_vertices = align_points_by_pelvis(kimodo_vertices, kimodo_joints)
-    aligned_stmc_vertices = align_points_by_pelvis(stmc_vertices, stmc_joints)
     floor_shift = compute_overlay_floor_shift(
-        aligned_kimodo_joints,
-        aligned_stmc_joints,
-        aligned_kimodo_vertices,
-        aligned_stmc_vertices,
+        kimodo_joints,
+        stmc_joints,
+        kimodo_vertices,
+        stmc_vertices,
     )
-    if floor_shift:
-        aligned_kimodo_joints[..., 2] += floor_shift
-        aligned_stmc_joints[..., 2] += floor_shift
-        aligned_kimodo_vertices[..., 2] += floor_shift
-        aligned_stmc_vertices[..., 2] += floor_shift
+    overlay_kimodo_joints = shift_points_to_floor(kimodo_joints, floor_shift)
+    overlay_stmc_joints = shift_points_to_floor(stmc_joints, floor_shift)
+    overlay_kimodo_vertices = shift_points_to_floor(kimodo_vertices, floor_shift)
+    overlay_stmc_vertices = shift_points_to_floor(stmc_vertices, floor_shift)
 
     return {
         "edges": compute_skeleton_edges(),
         "kimodo": {
             "joints": kimodo_joints,
             "vertices": kimodo_vertices,
-            "aligned_joints": aligned_kimodo_joints,
-            "aligned_vertices": aligned_kimodo_vertices,
+            "overlay_joints": overlay_kimodo_joints,
+            "overlay_vertices": overlay_kimodo_vertices,
             "faces": load_smplx_faces(),
         },
         "stmc": {
             "joints": stmc_joints,
             "vertices": stmc_vertices,
-            "aligned_joints": aligned_stmc_joints,
-            "aligned_vertices": aligned_stmc_vertices,
+            "overlay_joints": overlay_stmc_joints,
+            "overlay_vertices": overlay_stmc_vertices,
             "faces": load_stmc_faces(stmc_vertices.shape[1]),
         },
-        "overlay_floor_shift": float(floor_shift),
+        "overlay_floor_shift": floor_shift,
     }
 
 
@@ -271,11 +270,23 @@ def render_overlay_video(
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    flat_vertices = np.concatenate([kimodo_vertices.reshape(-1, 3), stmc_vertices.reshape(-1, 3)], axis=0)
-    flat_joints = np.concatenate([kimodo_joints.reshape(-1, 3), stmc_joints.reshape(-1, 3)], axis=0)
+    flat_vertices = np.concatenate(
+        [
+            kimodo_vertices.reshape(-1, 3),
+            stmc_vertices.reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    flat_joints = np.concatenate(
+        [
+            kimodo_joints.reshape(-1, 3),
+            stmc_joints.reshape(-1, 3),
+        ],
+        axis=0,
+    )
     combined = np.concatenate([flat_vertices, flat_joints], axis=0)
     xy_extent = combined[:, :2].max(axis=0) - combined[:, :2].min(axis=0)
-    radius = max(1.0, float(max(xy_extent[0], xy_extent[1])) * 0.45)
+    radius = max(1.0, float(max(xy_extent[0], xy_extent[1])) * 0.38)
     max_height = max(1.0, float(combined[:, 2].max()) * 1.15)
 
     fig = plt.figure(figsize=(figsize, figsize), dpi=160)
@@ -304,7 +315,6 @@ def render_overlay_video(
             kimodo_neck = kimodo_joints[frame_idx, NECK_INDEX]
             stmc_neck = stmc_joints[frame_idx, NECK_INDEX]
             neck_center = 0.5 * (kimodo_neck + stmc_neck)
-
             ax.set_xlim(neck_center[0] - radius, neck_center[0] + radius)
             ax.set_ylim(neck_center[1] - radius, neck_center[1] + radius)
             ax.set_zlim(0.0, max_height)

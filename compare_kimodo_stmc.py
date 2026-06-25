@@ -15,6 +15,14 @@ STMC_GENERATE_SCRIPT = STMC_ROOT / "generate.py"
 STMC_RENDER_SCRIPT = STMC_ROOT / "render.py"
 OVERLAY_RENDER_SCRIPT = STMC_ROOT / "render_overlay_compare.py"
 DEFAULT_STMC_RUN_DIR = STMC_ROOT / "pretrained_models" / "mdm-smpl_clip_smplrifke_humanml3d"
+STMC_JSON_WIDTH = 420.0
+STMC_JSON_HEIGHT = 700.0
+STMC_JSON_FOCAL = 700.0
+
+try:
+    from .stmc_npz_to_lhmpp_json_seq import convert_one_npz
+except ImportError:
+    from stmc_npz_to_lhmpp_json_seq import convert_one_npz
 
 
 @dataclass(frozen=True)
@@ -83,7 +91,7 @@ def parse_args() -> argparse.Namespace:
         "--overlay_figsize",
         type=float,
         default=6.0,
-        help="Matplotlib figure size for the pelvis-aligned overlay comparison video.",
+        help="Matplotlib figure size for the overlay comparison video.",
     )
     parser.add_argument(
         "--header_height",
@@ -141,7 +149,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip_overlay",
         action="store_true",
-        help="Skip the slower pelvis-aligned overlay comparison videos.",
+        help="Skip the slower overlay comparison videos.",
     )
     return parser.parse_args()
 
@@ -194,6 +202,27 @@ def ensure_clean_dir(path: Path, overwrite: bool) -> None:
 def run_command(cmd: list[str], cwd: Path | None = None) -> None:
     log_status("Running command: " + " ".join(cmd))
     subprocess.run(cmd, cwd=str(cwd) if cwd is not None else None, check=True)
+
+
+def has_frame_jsons(path: Path) -> bool:
+    return path.is_dir() and any(path.glob("*.json"))
+
+
+def export_stmc_frame_jsons(stmc_smpl_npz: Path, stmc_out_dir: Path) -> Path:
+    frames_dir = stmc_out_dir / "frames"
+    if has_frame_jsons(frames_dir):
+        log_status(f"Reusing STMC per-frame JSONs at {frames_dir}")
+        return frames_dir
+
+    log_status(f"Exporting STMC SMPL NPZ to LHM++ JSON frames at {frames_dir}")
+    convert_one_npz(
+        input_path=stmc_smpl_npz,
+        out_dir=frames_dir,
+        width=STMC_JSON_WIDTH,
+        height=STMC_JSON_HEIGHT,
+        focal=STMC_JSON_FOCAL,
+    )
+    return frames_dir
 
 
 def write_prompt_file(path: Path, entry: PromptEntry) -> None:
@@ -434,6 +463,7 @@ def run_stmc_generations(jobs: list[PromptJob], args: argparse.Namespace) -> dic
     for job in jobs:
         joints_dst = job.stmc_dir / "stmc_joints.npy"
         verts_dst = job.stmc_dir / "stmc_verts.npy"
+        smpl_dst = job.stmc_dir / "stmc_smpl.npz"
         if pending_jobs and job in pending_jobs:
             idx = pending_jobs.index(job)
             joints_src = gen_dir / f"{batch_prompt_file.stem}_text_{idx}.npy"
@@ -443,14 +473,19 @@ def run_stmc_generations(jobs: list[PromptJob], args: argparse.Namespace) -> dic
                 raise FileNotFoundError(f"Missing STMC joints output: {joints_src}")
             if not verts_src.exists():
                 raise FileNotFoundError(f"Missing STMC verts output: {verts_src}")
+            if not smpl_src.exists():
+                raise FileNotFoundError(f"Missing STMC SMPL output needed for frames/*.json: {smpl_src}")
             shutil.copy2(joints_src, joints_dst)
             shutil.copy2(verts_src, verts_dst)
-            if smpl_src.exists():
-                shutil.copy2(smpl_src, job.stmc_dir / "stmc_smpl.npz")
+            shutil.copy2(smpl_src, smpl_dst)
         elif not joints_dst.exists() or not verts_dst.exists():
             raise FileNotFoundError(
                 f"Missing existing STMC assets for prompt {job.entry.index}: {joints_dst}, {verts_dst}"
             )
+        if smpl_dst.exists():
+            export_stmc_frame_jsons(smpl_dst, job.stmc_dir)
+        elif not has_frame_jsons(job.stmc_dir / "frames"):
+            raise FileNotFoundError(f"Missing STMC SMPL NPZ needed for frames/*.json: {smpl_dst}")
         asset_paths[job.slug] = (joints_dst, verts_dst)
     return asset_paths
 
@@ -610,9 +645,9 @@ def main() -> None:
             )
 
         if args.skip_overlay:
-            log_status(f"Skipping pelvis-aligned overlay comparison video for prompt {job.entry.index}")
+            log_status(f"Skipping overlay comparison video for prompt {job.entry.index}")
         else:
-            log_status(f"Building pelvis-aligned overlay comparison video for prompt {job.entry.index}")
+            log_status(f"Building overlay comparison video for prompt {job.entry.index}")
             render_overlay_compare_video(
                 job=job,
                 kimodo_motion_npz=kimodo_motion_paths[job.slug],

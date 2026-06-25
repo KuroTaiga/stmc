@@ -8,7 +8,7 @@ except ImportError:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render a pelvis-aligned Kimodo vs STMC overlay comparison video.")
+    parser = argparse.ArgumentParser(description="Render a Kimodo vs STMC overlay comparison video.")
     parser.add_argument("--kimodo_motion_npz", required=True)
     parser.add_argument("--stmc_joints_npy", required=True)
     parser.add_argument("--stmc_verts_npy", required=True)
@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     target_frames = max(1, int(float(args.duration_s) * float(args.fps)))
-    log_status(f"Loading comparison motions for pelvis-aligned overlay ({target_frames} frames)")
+    log_status(f"Loading comparison motions for overlay render ({target_frames} frames)")
     data = load_compare_motion_data(
         kimodo_motion_npz=Path(args.kimodo_motion_npz),
         stmc_joints_npy=Path(args.stmc_joints_npy),
@@ -37,10 +37,10 @@ def main() -> None:
         prompt_text=args.prompt_text,
         kimodo_label=args.kimodo_label,
         stmc_label=args.stmc_label,
-        kimodo_joints=data["kimodo"]["aligned_joints"],
-        stmc_joints=data["stmc"]["aligned_joints"],
-        kimodo_vertices=data["kimodo"]["aligned_vertices"],
-        stmc_vertices=data["stmc"]["aligned_vertices"],
+        kimodo_joints=data["kimodo"]["overlay_joints"],
+        stmc_joints=data["stmc"]["overlay_joints"],
+        kimodo_vertices=data["kimodo"]["overlay_vertices"],
+        stmc_vertices=data["stmc"]["overlay_vertices"],
         kimodo_faces=data["kimodo"]["faces"],
         stmc_faces=data["stmc"]["faces"],
         edges=data["edges"],

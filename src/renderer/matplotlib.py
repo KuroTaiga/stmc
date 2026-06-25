@@ -241,7 +241,6 @@ def render_animation(
     def update(frame):
         nonlocal initialized
         skeleton = joints[frame]
-
         root = skeleton[0]
         update_camera(ax, root)
 

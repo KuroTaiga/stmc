@@ -1,3 +1,0 @@
-perform a squat # 0.0 # 9.14 # legs # spine
-high kick with the right foot # 9.14 # 15.73 # legs
-touches back of head with right hand # 9.74 # 15.45 # head # right arm

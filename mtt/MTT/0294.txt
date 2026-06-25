@@ -1,3 +1,0 @@
-look left # 0.0 # 8.07 # head
-walk in a quarter circle to the left # 8.07 # 16.0 # legs
-throw something with left hand # 8.72 # 15.6 # left arm

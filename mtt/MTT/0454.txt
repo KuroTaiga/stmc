@@ -1,3 +1,0 @@
-wipe with the right hand # 0.0 # 5.89 # right arm
-quickly walk backwards # 5.89 # 11.1 # legs
-punch with the left hand # 0.62 # 8.44 # left arm

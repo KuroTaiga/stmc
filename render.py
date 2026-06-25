@@ -1,7 +1,6 @@
 import os
 import logging
 import hydra
-
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 
@@ -32,8 +31,9 @@ def T(x):
 
 @hydra.main(config_path="configs", config_name="render", version_base="1.3")
 def render(c: DictConfig):
-    logger.info("Rendering script")
     import numpy as np
+
+    logger.info("Rendering script")
 
     motions = np.load(c.path)
 

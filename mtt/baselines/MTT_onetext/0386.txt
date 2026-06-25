@@ -1,1 +1,0 @@
-quickly walk forwards and then throw something with left hand while look right # 0.0 # 9.8 # head # left arm # legs

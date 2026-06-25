@@ -522,12 +522,7 @@ def save_video(
     log_status(f"Rendering skeleton video for sample {sample_idx:02d} to {video_path}")
     joints = np.asarray(sample_output["posed_joints"], dtype=np.float32)
     joints = convert_joints_for_video(joints)
-    renderer = MatplotlibRender(
-        jointstype="smpljoints",
-        fps=fps,
-        figsize=args.video_size,
-        canonicalize=False,
-    )
+    renderer = MatplotlibRender(jointstype="smpljoints", fps=fps, figsize=args.video_size, canonicalize=False)
     renderer(
         joints,
         output=str(video_path),
